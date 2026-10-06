@@ -51,28 +51,113 @@ function pose(t) {
   return { x, y, rot, hold };
 }
 
-const mixColor = (k) => {
-  // near-black cable -> electric blue
-  const a = [27, 31, 42],
-    b = [30, 136, 255];
-  return `rgb(${a.map((v, i) => Math.round(lerp(v, b[i], k))).join(",")})`;
-};
+/* ---------- WIRE (rewritten to match the video) ----------
+   Video behaviour:
+   1. Black wire lies slack on the platform, plugged into the monitor + server.
+   2. When the monkey grabs it, the wire pulls taut and blue energy pulses
+      race in from BOTH plugs toward the monkey.
+   3. Pulses merge into a solid glowing blue wire (thin white-blue core)
+      while the monkey swings.
+   4. After he lets go the blue drains out and the wire falls back, black
+      and slack, onto the platform.
+*/
+const WIRE_DARK = "#1b1f2a";
+const WIRE_BLUE = "#1e88ff";
+const WIRE_CORE = "#d6ecff";
+
+// 0..1 progress of a pulse that loops every `period` seconds
+const pulseAt = (t, period) => (t % period) / period;
+
+function wireState(t, x, y, hold) {
+  // plugs: monitor right side, server left side
+  const L = { x: 102, y: 360 };
+  const R = { x: 262, y: 360 };
+
+  // slack rest point sits low on the platform, behind the monkey
+  const rest = { x: 180, y: 391 };
+  const hand = { x, y: y - 16 };
+  const J = { x: lerp(rest.x, hand.x, hold), y: lerp(rest.y, hand.y, hold) };
+
+  // slack droops; taut wire gets a tiny upward bow like the clip
+  const sag = lerp(16, -3, hold);
+  const cL = { x: (L.x + J.x) / 2, y: (L.y + J.y) / 2 + sag };
+  const cR = { x: (R.x + J.x) / 2, y: (R.y + J.y) / 2 + sag };
+
+  // two halves so energy can flow from each plug inward
+  const left = `M${L.x} ${L.y} Q${cL.x} ${cL.y} ${J.x} ${J.y}`;
+  const right = `M${R.x} ${R.y} Q${cR.x} ${cR.y} ${J.x} ${J.y}`;
+
+  // energy phases (only while hold is on)
+  const taut = hold > 0.02;
+  const fill = taut ? ease((t - 3.0) / 0.7) * ease(hold * 1.4) : 0; // solid blue
+  const pulsing = taut && fill < 0.98; // travelling pulses
+  const pulseLen = 22; // percent of wire length
+  const p = pulseAt(t, 0.55);
+  const pulseOffset = pulseLen - p * (100 + pulseLen);
+  const pulseOpacity = pulsing ? ease(hold * 1.5) * (1 - fill) : 0;
+
+  return { L, R, left, right, fill, pulseLen, pulseOffset, pulseOpacity };
+}
+
+function Wire({ t, x, y, hold }) {
+  const w = wireState(t, x, y, hold);
+  const glow = w.fill * 0.55;
+  const flow = -t * 70;
+
+  const halves = [
+    { d: w.left, key: "l" },
+    { d: w.right, key: "r" },
+  ];
+
+  return (
+    <g>
+      {/* soft glow once energised */}
+      {halves.map(({ d, key }) => (
+        <path key={"g" + key} d={d} fill="none" stroke={WIRE_BLUE} strokeWidth="9"
+              opacity={glow} filter="url(#mk-blur)" strokeLinecap="round" />
+      ))}
+
+      {/* black wire body (outline + core) */}
+      {halves.map(({ d, key }) => (
+        <path key={"o" + key} d={d} fill="none" stroke={WIRE_DARK} strokeWidth="4.2"
+              strokeLinecap="round" />
+      ))}
+
+      {/* solid blue fill fading in over the black */}
+      {halves.map(({ d, key }) => (
+        <path key={"b" + key} d={d} fill="none" stroke={WIRE_BLUE} strokeWidth="3"
+              strokeLinecap="round" opacity={w.fill} />
+      ))}
+
+      {/* travelling pulses racing in from each plug toward the monkey */}
+      {halves.map(({ d, key }) => (
+        <path key={"p" + key} d={d} fill="none" stroke={WIRE_BLUE} strokeWidth="3.4"
+              strokeLinecap="round" pathLength="100"
+              strokeDasharray={`${w.pulseLen} 200`} strokeDashoffset={w.pulseOffset}
+              opacity={w.pulseOpacity} />
+      ))}
+
+      {/* thin bright core + flowing sparkle on the energised wire */}
+      {halves.map(({ d, key }) => (
+        <path key={"c" + key} d={d} fill="none" stroke={WIRE_CORE} strokeWidth="1.1"
+              strokeLinecap="round" pathLength="100" strokeDasharray="6 10"
+              strokeDashoffset={flow / 10} opacity={w.fill * 0.9} />
+      ))}
+
+      {/* plugs at the monitor and server */}
+      {[w.L, w.R].map((c, i) => (
+        <g key={i}>
+          <circle cx={c.x} cy={c.y} r="4.2" fill={WIRE_DARK} />
+          <circle cx={c.x} cy={c.y} r="1.9" fill={WIRE_BLUE} opacity={0.25 + w.fill * 0.75} />
+        </g>
+      ))}
+    </g>
+  );
+}
 
 /* ---------- the SVG scene ---------- */
 function Scene({ t }) {
   const { x, y, rot, hold } = pose(t);
-
-  // cables: monitor -> joint -> server
-  const L = { x: 102, y: 374 };
-  const R = { x: 262, y: 374 };
-  const rest = { x: 180, y: 384 };
-  const hand = { x, y: y - 16 };
-  const J = { x: lerp(rest.x, hand.x, hold), y: lerp(rest.y, hand.y, hold) };
-  const sag = lerp(22, 3, hold);
-  const cL = { x: (L.x + J.x) / 2, y: (L.y + J.y) / 2 + sag };
-  const cR = { x: (R.x + J.x) / 2, y: (R.y + J.y) / 2 + sag };
-  const cablePath = `M${L.x} ${L.y} Q${cL.x} ${cL.y} ${J.x} ${J.y} Q${cR.x} ${cR.y} ${R.x} ${R.y}`;
-  const cableColor = mixColor(hold);
 
   // monitor waveform reacts to the connection
   const amp = 2 + hold * 9;
@@ -83,12 +168,11 @@ function Scene({ t }) {
   }).join(" ");
 
   const blink = t % 3.2 > 3.08;
-  const dark = clamp((t - 9.2) / 0.8) * 0.6;
   const glow = 0.35 + hold * 0.65 + Math.sin(t * 6) * 0.05 * hold;
 
   return (
     <svg viewBox="0 0 360 640" width="100%" height="100%" role="img"
-         aria-label="Animated 404 error scene: a monkey swinging between a monitor and a server" style={{ display: "inline" }}>
+         aria-label="Animated 404 error scene: a monkey swinging between a monitor and a server" style={{ display: "block", overflow: "visible" }}>
       <defs>
         <linearGradient id="mk-bg" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#eef3fb" />
@@ -113,11 +197,6 @@ function Scene({ t }) {
           </feMerge>
         </filter>
       </defs>
-
-      {/* letterbox bands + panel */}
-      <rect width="360" height="640" fill="url(#mk-bg)" />
-      <rect width="360" height="70" fill="url(#mk-top)" />
-      <rect y="575" width="360" height="65" fill="url(#mk-bot)" />
 
       {/* 404 */}
       <g opacity={glow} style={{ transition: "none" }}>
@@ -157,12 +236,8 @@ function Scene({ t }) {
         <rect x="8" y="78" width="22" height="6" rx="2" fill="#262a4d" />
       </g>
 
-      {/* cables (glow, body, flowing pulses) */}
-      <path d={cablePath} fill="none" stroke="#1e88ff" strokeWidth="9" opacity={hold * 0.55}
-            filter="url(#mk-blur)" strokeLinecap="round" />
-      <path d={cablePath} fill="none" stroke={cableColor} strokeWidth="3.4" strokeLinecap="round" />
-      <path d={cablePath} fill="none" stroke="#bfe0ff" strokeWidth="1.4" strokeLinecap="round"
-            strokeDasharray="4 14" strokeDashoffset={-t * 70} opacity={hold * 0.9} />
+      {/* wire */}
+      <Wire t={t} x={x} y={y} hold={hold} />
 
       {/* monkey */}
       <g transform={`translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${rot.toFixed(1)})`}>
@@ -205,20 +280,17 @@ function Scene({ t }) {
       {/* copy */}
       <text x="180" y="470" textAnchor="middle" fontSize="17" fontWeight="800"
             fontFamily="Georgia, 'Times New Roman', serif" fill="#1b1f2a">
-        Look like you're lost
+        Your lost you'r network connection
       </text>
       <text x="180" y="488" textAnchor="middle" fontSize="9.5"
             fontFamily="'Trebuchet MS', 'Segoe UI', sans-serif" fill="#4b5263">
         The page you are looking for is not available
       </text>
-
-      {/* fade-out at the end of the loop */}
-      <rect width="360" height="640" fill="#0b0d14" opacity={dark} />
     </svg>
   );
 }
 
-/* ---------- the box: just the animated output, autoplay + loop ---------- */
+/* ---------- full-screen page: background colour covers the whole desktop ---------- */
 export default function MonkeyVideo() {
   const [t, setT] = useState(0);
 
@@ -236,21 +308,39 @@ export default function MonkeyVideo() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // same end-of-loop fade as the scene, but over the whole screen
+  const dark = clamp((t - 9.2) / 0.8) * 0.6;
+
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#14161d", padding: 16 }}>
-      <div
-        style={{
-          width: "min(100%, 360px)",
-          aspectRatio: "9 / 16",
-          maxHeight: "92vh",
-          background: "#000",
-          borderRadius: 16,
-          overflow: "hidden",
-          boxShadow: "0 18px 50px rgba(0,0,0,.55)",
-        }}
-      >
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        display: "grid",
+        placeItems: "center",
+        // top band + bottom band + panel colour, stretched edge to edge
+        background: [
+          "linear-gradient(#ffe9a6, #fff0bf) top / 100% 10.94vh no-repeat",
+          "linear-gradient(#ffd9cc, #ffcdbb) bottom / 100% 10.16vh no-repeat",
+          "linear-gradient(135deg, #eef3fb, #dbe5f4)",
+        ].join(", "),
+      }}
+    >
+      {/* scene box: no black background, no clipping, no rounded frame */}
+      <div style={{ height: "100vh", width: "100%", maxWidth: "56.25vh" }}>
         <Scene t={t} />
       </div>
+
+      {/* end-of-loop fade over the full screen */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "#0b0d14",
+          opacity: dark,
+          pointerEvents: "none",
+        }}
+      />
     </div>
   );
 }
